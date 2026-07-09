@@ -246,15 +246,19 @@ def get_foot_bracket_vertices(frac, vert_indices, polyline):
         total_len += d
         cum_lens.append(total_len)
 
+    if total_len <= 0:
+        return vert_indices[0], vert_indices[-1], 0.0, 0.0
+
     target = frac * total_len
+    prev_cum = 0.0
     for j, cum in enumerate(cum_lens):
-        if target <= cum or j == len(cum_lens) - 2:
-            prev_cum = cum_lens[j - 1] if j > 0 else 0.0
+        if target <= cum or j == len(cum_lens) - 1:
             n1 = vert_indices[j]
             n2 = vert_indices[j + 1]
-            dist_to_n1 = target
-            dist_to_n2 = total_len - target
+            dist_to_n1 = max(0.0, target - prev_cum)
+            dist_to_n2 = max(0.0, cum - target)
             return n1, n2, dist_to_n1, dist_to_n2
+        prev_cum = cum
 
     n1 = vert_indices[0]
     n2 = vert_indices[-1]
