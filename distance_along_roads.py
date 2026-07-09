@@ -1,13 +1,15 @@
+import argparse
+import math
+import csv
+import time
+import os
+
 from dbfread import DBF
 import shapefile
 import numpy as np
 from scipy.spatial import cKDTree
 from scipy.sparse import csr_matrix
 from scipy.sparse.csgraph import dijkstra
-
-import math
-import csv
-import time
 
 EARTH_RADIUS_M = 6371000
 MER = 20037508.34
@@ -75,23 +77,27 @@ def project_point_to_polyline(px, py, polyline):
 
     return best_dist, best_foot_x, best_foot_y, best_frac
 
-def load_schools(path):
+def load_objects(path):
     table = DBF(path, raw=True)
-    schools = []
+    field_names = list(table.field_names)
+    has_id_t = 'id_t' in field_names
+    objects = []
     for r in table:
         sx = float(r['X']) / 180 * MER
         sy = MER / math.pi * math.log(math.tan(math.pi / 4 + math.radians(float(r['Y'])) / 2))
-        schools.append({
+        obj = {
             'id': int(r['id']),
-            'id_t': decode(r['id_t']),
             'lon': float(decode(r['X'])),
             'lat': float(decode(r['Y'])),
-            'name': decode(r['name']),
-            'addres': decode(r['addres']),
             'mx': sx,
             'my': sy,
-        })
-    return schools
+        }
+        if has_id_t:
+            obj['id_t'] = decode(r['id_t'])
+        else:
+            obj['id_t'] = str(obj['id'])
+        objects.append(obj)
+    return objects
 
 def load_grid(path):
     table = DBF(path, raw=True)
@@ -254,23 +260,48 @@ def get_foot_bracket_vertices(frac, vert_indices, polyline):
     return n1, n2, 0.0, total_len
 
 def main():
-    base_dir = '/Users/skripko.sergey/Documents/Python/Graf/data'
-    school_path = f'{base_dir}/school.dbf'
-    grid_path = f'{base_dir}/points_buff_400.dbf'
-    roads_shp = f'{base_dir}/roads.shp'
-    output_path = f'{base_dir}/grid_to_school_distance.csv'
-    K_NEAREST = 3
+    parser = argparse.ArgumentParser(
+        description='Расчёт расстояний от объектов до опорной сетки по дорожному графу'
+    )
+    parser.add_argument('--objects', '-o',
+        default='/Users/skripko.sergey/Documents/Python/Graf/data/school.dbf',
+        help='Путь к DBF с объектами (поля: id, X, Y, опционально id_t)')
+    parser.add_argument('--grid', '-g',
+        default='/Users/skripko.sergey/Documents/Python/Graf/data/points_buff_400.dbf',
+        help='Путь к DBF с опорной сеткой')
+    parser.add_argument('--roads', '-r',
+        default='/Users/skripko.sergey/Documents/Python/Graf/data/roads.shp',
+        help='Путь к shapefile дорожной сети')
+    parser.add_argument('--output', '-O',
+        default=None,
+        help='Выходной CSV (по умолч.: <каталог_сетки>/grid_to_<имя_объектов>_distance.csv)')
+    parser.add_argument('--k', '-k', type=int, default=3,
+        help='Количество кандидатов KD-дерева (по умолч.: 3)')
+    args = parser.parse_args()
+
+    objects_path = args.objects
+    grid_path = args.grid
+    roads_shp = args.roads
+    K_NEAREST = args.k
+
+    base_dir = os.path.dirname(objects_path)
+    objects_stem = os.path.splitext(os.path.basename(objects_path))[0]
+    if args.output is None:
+        grid_stem = os.path.splitext(os.path.basename(grid_path))[0]
+        output_path = os.path.join(base_dir, f'{grid_stem}_to_{objects_stem}_distance.csv')
+    else:
+        output_path = args.output
 
     print('=' * 60)
-    print('  РАССТОЯНИЕ ПО ДОРОГАМ: ВСЕ ВЕРШИНЫ ГРАФА')
+    print(f'  РАССТОЯНИЕ ПО ДОРОГАМ: {objects_stem} → СЕТКА')
     print('=' * 60)
     print()
 
     print('[1] Загрузка данных...')
     t0 = time.time()
-    schools = load_schools(school_path)
+    objects = load_objects(objects_path)
     grid_points = load_grid(grid_path)
-    print(f'  Школ: {len(schools)}, Точек сетки: {len(grid_points)}')
+    print(f'  Объектов: {len(objects)}, Точек сетки: {len(grid_points)}')
     print(f'  Время: {time.time()-t0:.1f}с')
     print()
 
@@ -279,17 +310,17 @@ def main():
     num_nodes = len(nodes_list)
     print()
 
-    print('[3] Проекция школ на дороги...')
+    print(f'[3] Проекция объектов ({objects_stem}) на дороги...')
     t0 = time.time()
-    school_node_min = {}
-    bracket_node_school = {}
-    school_proj = []
-    school_id_map = {s['id']: s['id_t'] for s in schools}
+    source_node_min = {}
+    bracket_node_source = {}
+    source_proj = []
+    source_id_map = {s['id']: s['id_t'] for s in objects}
 
-    for s in schools:
+    for s in objects:
         info = find_projection(s['mx'], s['my'], nodes_list, segment_vert_indices, vert_tree, vert_to_seg, K_NEAREST)
         if info is None:
-            school_proj.append(None)
+            source_proj.append(None)
             continue
 
         vert_indices = info['vert_indices']
@@ -298,18 +329,18 @@ def main():
 
         for n, d in [(n1, d1), (n2, d2)]:
             total = info['perp'] + d
-            if total < school_node_min.get(n, float('inf')):
-                school_node_min[n] = total
-                bracket_node_school[n] = s['id']
+            if total < source_node_min.get(n, float('inf')):
+                source_node_min[n] = total
+                bracket_node_source[n] = s['id']
 
         info['bracket_n1'] = n1
         info['bracket_n2'] = n2
         info['dist_n1'] = d1
         info['dist_n2'] = d2
-        school_proj.append(info)
+        source_proj.append(info)
 
-    print(f'  Спроецировано: {sum(1 for p in school_proj if p is not None)} из {len(schools)}')
-    print(f'  Уникальных узлов доступа: {len(school_node_min)}')
+    print(f'  Спроецировано: {sum(1 for p in source_proj if p is not None)} из {len(objects)}')
+    print(f'  Уникальных узлов доступа: {len(source_node_min)}')
     print(f'  Время: {time.time()-t0:.1f}с')
     print()
 
@@ -320,7 +351,7 @@ def main():
     virt_node = num_nodes
     extended_n = num_nodes + 1
     virt_rows, virt_cols, virt_data = [], [], []
-    for node, dist in school_node_min.items():
+    for node, dist in source_node_min.items():
         virt_rows.extend([virt_node, node])
         virt_cols.extend([node, virt_node])
         virt_data.extend([dist, dist])
@@ -344,25 +375,25 @@ def main():
         print(f'  Макс. расстояние: {np.max(node_dist[reachable]):.0f} м')
     print(f'  Время: {time.time()-t0:.1f}с')
 
-    print('  Распространение ID школ...')
-    school_of_node = np.full(num_nodes, -1, dtype=np.int32)
-    for node_idx, school_id in bracket_node_school.items():
-        school_of_node[node_idx] = school_id
+    print('  Распространение ID объектов по графу...')
+    source_of_node = np.full(num_nodes, -1, dtype=np.int32)
+    for node, obj_id in bracket_node_source.items():
+        source_of_node[node] = obj_id
     sorted_nodes = np.where(reachable)[0]
     sorted_nodes = sorted_nodes[np.argsort(node_dist[sorted_nodes])]
     for node in sorted_nodes:
         pred = node_pred[node]
         if 0 <= pred < num_nodes:
-            src = school_of_node[pred]
+            src = source_of_node[pred]
             if src >= 0:
-                school_of_node[node] = src
-    reachable_schools = school_of_node[reachable]
-    unique_schools = len(set(reachable_schools[reachable_schools >= 0]))
-    print(f'  Узлов с известной школой: {np.sum(school_of_node >= 0)}')
-    print(f'  Уникальных школ в графе: {unique_schools}')
+                source_of_node[node] = src
+    reachable_sources = source_of_node[reachable]
+    unique_sources = len(set(reachable_sources[reachable_sources >= 0]))
+    print(f'  Узлов с известным объектом: {np.sum(source_of_node >= 0)}')
+    print(f'  Уникальных объектов в графе: {unique_sources}')
     print()
 
-    print('[5] Проекция точек сетки...')
+    print(f'[5] Проекция точек сетки...')
     t0 = time.time()
     grid_proj = []
     for gp in grid_points:
@@ -390,8 +421,8 @@ def main():
         writer.writerow([
             'grid_point_id', 'grid_lon', 'grid_lat',
             'grid_col', 'grid_row',
-            'perp_dist_m', 'road_dist_to_school_m', 'total_dist_m',
-            'school_id', 'school_id_t',
+            'perp_dist_m', 'road_dist_to_source_m', 'total_dist_m',
+            'source_id', 'source_id_t',
         ])
 
         for i, gp in enumerate(grid_points):
@@ -410,23 +441,23 @@ def main():
             perp_g = info['perp']
 
             best_road = float('inf')
-            best_school_id = -1
+            best_sid = -1
             if reachable[n1]:
                 candidate = node_dist[n1] + d1
                 if candidate < best_road:
                     best_road = candidate
-                    best_school_id = school_of_node[n1]
+                    best_sid = source_of_node[n1]
             if reachable[n2]:
                 candidate = node_dist[n2] + d2
                 if candidate < best_road:
                     best_road = candidate
-                    best_school_id = school_of_node[n2]
+                    best_sid = source_of_node[n2]
 
             if best_road < float('inf'):
                 total = perp_g + best_road
                 reachable_count += 1
-                sid = best_school_id if best_school_id >= 0 else ''
-                sid_t = school_id_map.get(best_school_id, '') if best_school_id >= 0 else ''
+                sid = best_sid if best_sid >= 0 else ''
+                sid_t = source_id_map.get(best_sid, '') if best_sid >= 0 else ''
                 writer.writerow([
                     gp['id'], f'{gp["lon"]:.8f}', f'{gp["lat"]:.8f}',
                     gp['col_index'], gp['row_index'],

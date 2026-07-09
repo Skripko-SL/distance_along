@@ -1,10 +1,12 @@
+import argparse
+import math
+import csv
+import time
+import os
+
 from dbfread import DBF
 import numpy as np
 from scipy.spatial import cKDTree
-import math
-import csv
-import sys
-import time
 
 EARTH_RADIUS_M = 6371000
 
@@ -26,19 +28,23 @@ def haversine_distance_rad(lat1_rad, lon1_rad, lat2_rad, lon2_rad):
 def decode(raw_bytes):
     return raw_bytes.decode('utf-8', errors='replace').strip()
 
-def load_schools(path):
+def load_objects(path):
     table = DBF(path, raw=True)
-    schools = []
+    field_names = list(table.field_names)
+    has_id_t = 'id_t' in field_names
+    objects = []
     for r in table:
-        schools.append({
+        obj = {
             'id': int(r['id']),
-            'id_t': decode(r['id_t']),
             'lon': float(decode(r['X'])),
             'lat': float(decode(r['Y'])),
-            'name': decode(r['name']),
-            'addres': decode(r['addres']),
-        })
-    return schools
+        }
+        if has_id_t:
+            obj['id_t'] = decode(r['id_t'])
+        else:
+            obj['id_t'] = str(obj['id'])
+        objects.append(obj)
+    return objects
 
 def load_grid(path):
     table = DBF(path, raw=True)
@@ -62,19 +68,35 @@ def load_grid(path):
     return points
 
 def main():
-    base_dir = '/Users/skripko.sergey/Documents/Python/Graf/data'
-    school_path = f'{base_dir}/school.dbf'
-    grid_path = f'{base_dir}/points_buff_400.dbf'
-    output_path = f'{base_dir}/school_to_grid_distance.csv'
+    parser = argparse.ArgumentParser(
+        description='Расчёт расстояний по прямой (great-circle) от объектов до опорной сетки'
+    )
+    parser.add_argument('--objects', '-o',
+        default='/Users/skripko.sergey/Documents/Python/Graf/data/school.dbf',
+        help='Путь к DBF с объектами (поля: id, X, Y, опционально id_t)')
+    parser.add_argument('--grid', '-g',
+        default='/Users/skripko.sergey/Documents/Python/Graf/data/points_buff_400.dbf',
+        help='Путь к DBF с опорной сеткой')
+    parser.add_argument('--output', '-O',
+        default=None,
+        help='Выходной CSV (по умолч.: <каталог_объектов>/<имя_объектов>_to_grid_distance.csv)')
+    args = parser.parse_args()
 
-    print('Загрузка школ...')
+    base_dir = os.path.dirname(args.objects)
+    objects_stem = os.path.splitext(os.path.basename(args.objects))[0]
+    if args.output is None:
+        output_path = os.path.join(base_dir, f'{objects_stem}_to_grid_distance.csv')
+    else:
+        output_path = args.output
+
+    print(f'Загрузка объектов ({objects_stem})...')
     t0 = time.time()
-    schools = load_schools(school_path)
-    print(f'  Загружено {len(schools)} школ за {time.time() - t0:.2f}с')
+    objects = load_objects(args.objects)
+    print(f'  Загружено {len(objects)} объектов за {time.time() - t0:.2f}с')
 
     print('Загрузка опорных точек сетки...')
     t0 = time.time()
-    points = load_grid(grid_path)
+    points = load_grid(args.grid)
     print(f'  Загружено {len(points)} точек за {time.time() - t0:.2f}с')
 
     print('Построение KD-дерева (3D-декартовы координаты)...')
@@ -89,16 +111,16 @@ def main():
     tree = cKDTree(coords_3d)
     print(f'  Дерево построено за {time.time() - t0:.2f}с')
 
-    print('Поиск ближайших точек для каждой школы...')
+    print('Поиск ближайших точек для каждого объекта...')
     t0 = time.time()
-    school_lats_rad = np.radians([s['lat'] for s in schools])
-    school_lons_rad = np.radians([s['lon'] for s in schools])
-    school_coords_3d = np.column_stack([
-        np.cos(school_lats_rad) * np.cos(school_lons_rad),
-        np.cos(school_lats_rad) * np.sin(school_lons_rad),
-        np.sin(school_lats_rad),
+    obj_lats_rad = np.radians([s['lat'] for s in objects])
+    obj_lons_rad = np.radians([s['lon'] for s in objects])
+    obj_coords_3d = np.column_stack([
+        np.cos(obj_lats_rad) * np.cos(obj_lons_rad),
+        np.cos(obj_lats_rad) * np.sin(obj_lons_rad),
+        np.sin(obj_lats_rad),
     ])
-    distances_3d, indices = tree.query(school_coords_3d, k=1)
+    distances_3d, indices = tree.query(obj_coords_3d, k=1)
     print(f'  Поиск выполнен за {time.time() - t0:.2f}с')
 
     print('Сохранение результатов...')
@@ -107,13 +129,13 @@ def main():
     with open(output_path, 'w', newline='', encoding='utf-8') as f:
         writer = csv.writer(f)
         writer.writerow([
-            'school_id', 'school_id_t', 'school_name', 'school_address',
-            'school_x', 'school_y',
+            'source_id', 'source_id_t',
+            'source_lon', 'source_lat',
             'grid_point_id', 'grid_left', 'grid_top', 'grid_col', 'grid_row',
             'distance_m'
         ])
 
-        for i, s in enumerate(schools):
+        for i, s in enumerate(objects):
             p = points[indices[i]]
             dist_m = haversine_distance_rad(
                 math.radians(s['lat']), math.radians(s['lon']),
@@ -121,7 +143,7 @@ def main():
             )
 
             writer.writerow([
-                s['id'], s['id_t'], s['name'], s['addres'],
+                s['id'], s['id_t'],
                 f'{s["lon"]:.8f}', f'{s["lat"]:.8f}',
                 p['id'], f'{p["left"]:.2f}', f'{p["top"]:.2f}',
                 p['col_index'], p['row_index'],
@@ -134,10 +156,10 @@ def main():
     min_dist = min(float(r['distance_m'].replace(',', '.')) for r in csv.DictReader(open(output_path, encoding='utf-8')))
 
     print(f'\nГотово!')
-    print(f'  Всего обработано школ: {len(schools)}')
+    print(f'  Всего обработано объектов: {len(objects)}')
     print(f'  Всего опорных точек: {len(points)}')
-    print(f'  Мин. расстояние до ближайшей точки: {min_dist:.3f} м')
-    print(f'  Макс. расстояние до ближайшей точки: {max_dist:.3f} м')
+    print(f'  Мин. расстояние: {min_dist:.3f} м')
+    print(f'  Макс. расстояние: {max_dist:.3f} м')
 
 if __name__ == '__main__':
     main()
