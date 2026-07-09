@@ -1,8 +1,6 @@
 # Расчёт расстояний от объектов до опорной сетки точек
 
-Два метода расчёта:
-1. **По прямой (great-circle)** — скрипт `calculate_distance.py`
-2. **По дорожному графу** — скрипт `distance_along_roads.py`
+Расчёт по дорожному графу — скрипт `distance_along_roads.py`.
 
 ---
 
@@ -36,118 +34,7 @@
 | `col_index` | N | Индекс колонки в сетке |
 | `row_index` | N | Индекс строки в сетке |
 
-Центр ячейки: `center_x = left + 200`, `center_y = top + 200`.
 
-Проекция исходных данных — **WGS 84 Web Mercator Auxiliary Sphere (EPSG:3857)**.
-
----
-
-## Метод расчёта
-
-### Этап 1. Приведение координат к единой системе отсчёта
-
-Координаты опорных точек сетки пересчитываются из **EPSG:3857 (метры)** в **WGS84 (градусы)**:
-
-```
-lon = cx / 20037508.34 * 180
-lat = degrees(2 * atan(exp(cy / 20037508.34 * π)) - π/2)
-```
-
-где:
-- `cx, cy` — центр ячейки сетки в EPSG:3857
-- `20037508.34 = π * R` (R = 6378137 м — радиус сферы WGS84)
-
-### Этап 2. Построение пространственного индекса (KD-дерево)
-
-Для эффективного поиска ближайшего соседа среди 114 232 опорных точек используется **KD-дерево** (scipy.spatial.cKDTree).
-
-**Проблема:** Евклидово расстояние на плоскости (широта, долгота) в радианах искажено — на широте 56° 1° долготы в ~1.8 раза короче 1° широты. Простой поиск по (lat, lon) даёт неверный результат.
-
-**Решение:** Точки проецируются на **единичную сферу (3D-декартовы координаты)**:
-
-```
-x = cos(lat_rad) * cos(lon_rad)
-y = cos(lat_rad) * sin(lon_rad)
-z = sin(lat_rad)
-```
-
-Евклидово расстояние в 3D-пространстве монотонно связано с гаверсинусовым расстоянием на сфере, поэтому поиск ближайшего соседа в 3D-координатах **корректен для любых расстояний**.
-
-### Этап 3. Поиск ближайшей точки
-
-Для каждого целевого объекта:
-1. Его координаты (lat, lon) переводятся в 3D-декартовы координаты на единичной сфере
-2. Через KD-дерево находится ближайшая опорная точка (k=1)
-
-### Этап 4. Расчёт геодезического расстояния
-
-Финальное расстояние вычисляется по **формуле гаверсинуса**:
-
-```
-a = sin²(Δlat/2) + cos(lat₁) · cos(lat₂) · sin²(Δlon/2)
-c = 2 · atan2(√a, √(1-a))
-distance = c · R
-```
-
-где R = 6 371 000 м — средний радиус Земли.
-
-Это даёт точное расстояние по **большому кругу** (great-circle distance).
-
----
-
-## Результаты расчёта (школы → сетка)
-
-### Параметры запуска
-
-| Параметр | Значение |
-|----------|----------|
-| Целевые объекты | 821 школа Нижегородской области |
-| Опорная сетка | 114 232 точки, шаг 400 м |
-| Время выполнения | ~0.5 секунды |
-| Выходной файл | `school_to_grid_distance.csv` |
-
-### Статистика расстояний
-
-| Показатель | Значение |
-|------------|----------|
-| Минимальное | 25.2 м |
-| 25-й перцентиль | 318.2 м |
-| Медиана (50%) | 590.9 м |
-| 75-й перцентиль | 1 917.7 м |
-| 90-й перцентиль | 5 208.8 м |
-| 95-й перцентиль | 6 624.7 м |
-| 99-й перцентиль | 7 915.9 м |
-| Максимальное | 8 917.1 м |
-
-### Структура выходного CSV
-
-```
-school_id, school_id_t, school_name, school_address,
-school_x, school_y,
-grid_point_id, grid_left, grid_top, grid_col, grid_row,
-distance_m
-```
-
-| Поле | Описание |
-|------|----------|
-| `school_id` | ID школы из school.dbf |
-| `school_id_t` | Уникальный идентификатор школы |
-| `school_name` | Название школы |
-| `school_address` | Адрес школы |
-| `school_x` | Долгота школы (WGS84, градусы) |
-| `school_y` | Широта школы (WGS84, градусы) |
-| `grid_point_id` | ID ближайшей опорной точки сетки |
-| `grid_left` | Координата left точки (EPSG:3857, метры) |
-| `grid_top` | Координата top точки (EPSG:3857, метры) |
-| `grid_col` | Индекс колонки точки в сетке |
-| `grid_row` | Индекс строки точки в сетке |
-| `distance_m` | Расстояние от школы до точки (метры, great-circle) |
-
-### Примечание о покрытии сетки
-
-Сетка `points_buff_400` не является полным прямоугольником — она покрывает **114 232 точки** (при потенциальном максимуме ~2.8 млн для полного прямоугольника над областью). Некоторые территории (включая часть Нижнего Новгорода) находятся за пределами сетки. Для 37.5% школ расстояние до ближайшей точки превышает 1 км — это школы, попавшие в пропуски сетки.
-
----
 
 ## Расчёт расстояний по дорожному графу (distance_along_roads.py)
 
@@ -318,93 +205,33 @@ perp_dist_m, road_dist_to_school_m, total_dist_m
 
 ### Подготовка данных
 
-Для расчёта расстояний от **любых других объектов** (больницы, остановки, магазины, etc.) необходимо подготовить CSV-файл со следующими колонками:
+Для расчёта расстояний от **любых других объектов** (больницы, остановки, магазины, etc.) необходимо подготовить DBF-файл с полями:
 
 ```csv
-id,lat,lon,name,address
-1,56.3265,43.8794,"Объект 1","Адрес 1"
-2,56.2175,43.7618,"Объект 2","Адрес 2"
+id, X, Y
+1, 56.3265, 43.8794
+2, 56.2175, 43.7618
 ```
 
-Минимально обязательные поля: `id`, `lat`, `lon`.
+Минимально обязательные поля: `id`, `X`, `Y`.
+Опционально: `id_t` — строковый идентификатор.
 
 ### Запуск расчёта
 
 ```bash
-python3 calculate_distance.py \
-  --objects-file objects.csv \
-  --objects-crs epsg:4326 \
-  --grid-file points_buff_400.dbf \
-  --output results.csv
+python3 distance_along_roads.py --objects hospitals.dbf
 ```
 
-### Пример: больницы
-
-```python
-from dbfread import DBF
-import numpy as np
-from scipy.spatial import cKDTree
-import math, csv
-
-# 1. Загрузка точек сетки
-def load_grid(grid_path):
-    # ... (см. calculate_distance.py: load_grid)
-    pass
-
-# 2. Загрузка больниц
-hospitals = []
-with open('hospitals.csv') as f:
-    for row in csv.DictReader(f):
-        hospitals.append({
-            'id': int(row['id']),
-            'lat': float(row['lat']),
-            'lon': float(row['lon']),
-            'name': row.get('name', ''),
-        })
-
-# 3. Построение KD-дерева
-points = load_grid('points_buff_400.dbf')
-p_lats = np.radians([p['lat'] for p in points])
-p_lons = np.radians([p['lon'] for p in points])
-tree = cKDTree(np.column_stack([
-    np.cos(p_lats) * np.cos(p_lons),
-    np.cos(p_lats) * np.sin(p_lons),
-    np.sin(p_lats),
-]))
-
-# 4. Поиск ближайших
-h_lats = np.radians([h['lat'] for h in hospitals])
-h_lons = np.radians([h['lon'] for h in hospitals])
-h_3d = np.column_stack([
-    np.cos(h_lats) * np.cos(h_lons),
-    np.cos(h_lats) * np.sin(h_lons),
-    np.sin(h_lats),
-])
-_, indices = tree.query(h_3d, k=1)
-
-# 5. Расчёт расстояний и сохранение
-EARTH_R = 6371000
-with open('hospitals_to_grid.csv', 'w', newline='', encoding='utf-8') as f:
-    w = csv.writer(f)
-    w.writerow(['hospital_id', 'lat', 'lon', 'grid_point_id', 'grid_col', 'grid_row', 'distance_m'])
-    for i, h in enumerate(hospitals):
-        p = points[indices[i]]
-        # haversine ...
-        w.writerow([h['id'], h['lat'], h['lon'], p['id'], p['col_index'], p['row_index'], dist_m])
-```
+Результат: `all_points_to_hospitals_distance.csv` (если сетка `all_points.dbf`).
 
 ### Форматы входных данных
 
-Скрипт поддерживает любые форматы, читаемые Python:
+Скрипт принимает:
 
 | Формат | Библиотека | Пример |
 |--------|-----------|--------|
 | DBF (dBase/FoxPro) | `dbfread` | `DBF(path, raw=True)` |
 | CSV | встроенный `csv` | `csv.DictReader(open(path))` |
-| Shapefile | `geopandas` / `fiona` | `gpd.read_file(path)` |
-| GeoJSON | `geopandas` / `json` | `gpd.read_file(path)` |
-| Excel | `pandas` / `openpyxl` | `pd.read_excel(path)` |
-| PostGIS | `sqlalchemy` | `pd.read_sql(query, conn)` |
 
 ### Требования к системе координат
 
@@ -417,12 +244,6 @@ with open('hospitals_to_grid.csv', 'w', newline='', encoding='utf-8') as f:
 
 ### Зависимости
 
-#### Для прямолинейного расчёта
-```bash
-pip3 install scipy numpy dbfread
-```
-
-#### Для расчёта по дорожному графу (с перпендикулярами)
 ```bash
 pip3 install scipy numpy dbfread pyshp
 ```
@@ -435,13 +256,12 @@ pip3 install scipy numpy dbfread pyshp
 
 | Файл | Описание |
 |------|----------|
-| `calculate_distance.py` | Основной скрипт расчёта (шаблон для адаптации) |
+| `distance_along_roads.py` | Скрипт расчёта по дорожному графу |
+| `RUN_INSTRUCTION.md` | Инструкция пользователя |
 | `school.dbf` | Исходные данные — 821 школа |
 | `school.shp` / `.shx` / `.prj` / `.cpg` | Shape-файл школ |
 | `points_buff_400.dbf` | Опорная сетка — 114 232 точки |
-| `points_buff_400.shp` / `.shx` / `.prj` / `.cpg` | Shape-файл сетки |
-| `school_to_grid_distance.csv` | Результат расчёта (по прямой) |
-| `grid_to_school_distance.csv` | Результат расчёта (по дорожному графу) |
-| `distance_along_roads.py` | Скрипт расчёта по дорожному графу |
-| `school_analysis.md` | Анализ данных школ |
+| `all_points.dbf` | Полная сетка — 707 489 точек |
+| `roads.shp` / `.dbf` / `.shx` | Дорожная сеть (219 187 сегментов) |
+| `all_points_to_school_distance.csv` | Результат расчёта (дорожный граф) |
 | `GRID_DISTANCE_CALCULATION.md` | Данный файл — описание методологии |

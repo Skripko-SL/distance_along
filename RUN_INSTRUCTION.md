@@ -57,37 +57,7 @@ python3 distance_along_roads.py
 
 ---
 
-## 2. Расчёт по прямой (great-circle)
-
-```bash
-python3 calculate_distance.py --objects school.dbf
-```
-
-Результат: `school_to_grid_distance.csv`
-
-Для каждого объекта находит ближайшую точку сетки по гаверсинусу (без учёта дорог).
-
-### Параметры
-
-| Флаг | Назначение | По умолчанию |
-|------|-----------|-------------|
-| `--objects, -o` | DBF с объектами | `school.dbf` |
-| `--grid, -g` | DBF опорной сетки | `points_buff_400.dbf` |
-| `--output, -O` | Выходной CSV | `<объекты>_to_grid_distance.csv` |
-
-### Выходной CSV
-
-| Колонка | Описание |
-|---------|----------|
-| `source_id` | ID объекта |
-| `source_id_t` | Строковый ID объекта |
-| `source_lon`, `source_lat` | Координаты объекта (WGS84) |
-| `grid_point_id` | ID ближайшей точки сетки |
-| `distance_m` | Расстояние по прямой (м) |
-
----
-
-## 3. Формат входных DBF
+## 2. Формат входных DBF
 
 Любой DBF-файл с полями:
 
@@ -111,7 +81,7 @@ python3 calculate_distance.py --objects school.dbf
 
 ---
 
-## 4. Требования к среде
+## 3. Требования к среде
 
 ```bash
 pip3 install scipy numpy dbfread pyshp
