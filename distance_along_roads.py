@@ -282,7 +282,9 @@ def main():
     print('[3] Проекция школ на дороги...')
     t0 = time.time()
     school_node_min = {}
+    bracket_node_school = {}
     school_proj = []
+    school_id_map = {s['id']: s['id_t'] for s in schools}
 
     for s in schools:
         info = find_projection(s['mx'], s['my'], nodes_list, segment_vert_indices, vert_tree, vert_to_seg, K_NEAREST)
@@ -294,8 +296,11 @@ def main():
         polyline = [(nodes_list[vi][0], nodes_list[vi][1]) for vi in vert_indices]
         n1, n2, d1, d2 = get_foot_bracket_vertices(info['frac'], vert_indices, polyline)
 
-        school_node_min[n1] = min(school_node_min.get(n1, float('inf')), info['perp'] + d1)
-        school_node_min[n2] = min(school_node_min.get(n2, float('inf')), info['perp'] + d2)
+        for n, d in [(n1, d1), (n2, d2)]:
+            total = info['perp'] + d
+            if total < school_node_min.get(n, float('inf')):
+                school_node_min[n] = total
+                bracket_node_school[n] = s['id']
 
         info['bracket_n1'] = n1
         info['bracket_n2'] = n2
@@ -325,8 +330,12 @@ def main():
     all_data = np.concatenate([coo.data, virt_data])
     ext_graph = csr_matrix((all_data, (all_rows, all_cols)), shape=(extended_n, extended_n))
 
-    dist_matrix = dijkstra(csgraph=ext_graph, directed=False, indices=[virt_node], min_only=True)
-    node_dist = dist_matrix[:num_nodes]
+    dist_matrix_2d, predecessors_2d = dijkstra(
+        csgraph=ext_graph, directed=False, indices=[virt_node],
+        return_predecessors=True
+    )
+    node_dist = dist_matrix_2d[0, :num_nodes]
+    node_pred = predecessors_2d[0, :num_nodes]
     reachable = np.isfinite(node_dist)
 
     print(f'  Связей от супер-источника: {len(virt_rows)}')
@@ -334,6 +343,23 @@ def main():
     if np.any(reachable):
         print(f'  Макс. расстояние: {np.max(node_dist[reachable]):.0f} м')
     print(f'  Время: {time.time()-t0:.1f}с')
+
+    print('  Распространение ID школ...')
+    school_of_node = np.full(num_nodes, -1, dtype=np.int32)
+    for node_idx, school_id in bracket_node_school.items():
+        school_of_node[node_idx] = school_id
+    sorted_nodes = np.where(reachable)[0]
+    sorted_nodes = sorted_nodes[np.argsort(node_dist[sorted_nodes])]
+    for node in sorted_nodes:
+        pred = node_pred[node]
+        if 0 <= pred < num_nodes:
+            src = school_of_node[pred]
+            if src >= 0:
+                school_of_node[node] = src
+    reachable_schools = school_of_node[reachable]
+    unique_schools = len(set(reachable_schools[reachable_schools >= 0]))
+    print(f'  Узлов с известной школой: {np.sum(school_of_node >= 0)}')
+    print(f'  Уникальных школ в графе: {unique_schools}')
     print()
 
     print('[5] Проекция точек сетки...')
@@ -365,6 +391,7 @@ def main():
             'grid_point_id', 'grid_lon', 'grid_lat',
             'grid_col', 'grid_row',
             'perp_dist_m', 'road_dist_to_school_m', 'total_dist_m',
+            'school_id', 'school_id_t',
         ])
 
         for i, gp in enumerate(grid_points):
@@ -373,7 +400,7 @@ def main():
                 writer.writerow([
                     gp['id'], f'{gp["lon"]:.8f}', f'{gp["lat"]:.8f}',
                     gp['col_index'], gp['row_index'],
-                    '0.00', 'NaN', 'NaN',
+                    '0.00', 'NaN', 'NaN', '', '',
                 ])
                 unreachable_count += 1
                 continue
@@ -382,25 +409,35 @@ def main():
             d1, d2 = info['dist_n1'], info['dist_n2']
             perp_g = info['perp']
 
-            road_dist = float('inf')
+            best_road = float('inf')
+            best_school_id = -1
             if reachable[n1]:
-                road_dist = min(road_dist, node_dist[n1] + d1)
+                candidate = node_dist[n1] + d1
+                if candidate < best_road:
+                    best_road = candidate
+                    best_school_id = school_of_node[n1]
             if reachable[n2]:
-                road_dist = min(road_dist, node_dist[n2] + d2)
+                candidate = node_dist[n2] + d2
+                if candidate < best_road:
+                    best_road = candidate
+                    best_school_id = school_of_node[n2]
 
-            if road_dist < float('inf'):
-                total = perp_g + road_dist
+            if best_road < float('inf'):
+                total = perp_g + best_road
                 reachable_count += 1
+                sid = best_school_id if best_school_id >= 0 else ''
+                sid_t = school_id_map.get(best_school_id, '') if best_school_id >= 0 else ''
                 writer.writerow([
                     gp['id'], f'{gp["lon"]:.8f}', f'{gp["lat"]:.8f}',
                     gp['col_index'], gp['row_index'],
-                    f'{perp_g:.3f}', f'{road_dist:.3f}', f'{total:.3f}',
+                    f'{perp_g:.3f}', f'{best_road:.3f}', f'{total:.3f}',
+                    sid, sid_t,
                 ])
             else:
                 writer.writerow([
                     gp['id'], f'{gp["lon"]:.8f}', f'{gp["lat"]:.8f}',
                     gp['col_index'], gp['row_index'],
-                    f'{perp_g:.3f}', 'NaN', 'NaN',
+                    f'{perp_g:.3f}', 'NaN', 'NaN', '', '',
                 ])
                 unreachable_count += 1
 
