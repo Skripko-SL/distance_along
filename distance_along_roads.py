@@ -264,17 +264,18 @@ def get_foot_bracket_vertices(frac, vert_indices, polyline):
     return n1, n2, 0.0, total_len
 
 def main():
+    script_dir = os.path.dirname(os.path.abspath(__file__))
     parser = argparse.ArgumentParser(
         description='Расчёт расстояний от объектов до опорной сетки по дорожному графу'
     )
     parser.add_argument('--objects', '-o',
-        required=True,
+        default=os.path.join(script_dir, 'school.dbf'),
         help='Путь к DBF с объектами (поля: id, X, Y, опционально id_t)')
     parser.add_argument('--grid', '-g',
-        required=True,
+        default=os.path.join(script_dir, 'all_points.dbf'),
         help='Путь к DBF с опорной сеткой')
     parser.add_argument('--roads', '-r',
-        required=True,
+        default=os.path.join(script_dir, 'roads.shp'),
         help='Путь к shapefile дорожной сети')
     parser.add_argument('--output', '-O',
         default=None,
