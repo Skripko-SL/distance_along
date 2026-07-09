@@ -3,6 +3,7 @@ import math
 import csv
 import time
 import os
+import sys
 
 from dbfread import DBF
 import shapefile
@@ -264,7 +265,10 @@ def get_foot_bracket_vertices(frac, vert_indices, polyline):
     return n1, n2, 0.0, total_len
 
 def main():
-    script_dir = os.path.dirname(os.path.abspath(__file__))
+    if getattr(sys, 'frozen', False):
+        script_dir = os.path.dirname(sys.executable)
+    else:
+        script_dir = os.path.dirname(os.path.abspath(__file__))
     parser = argparse.ArgumentParser(
         description='Расчёт расстояний от объектов до опорной сетки по дорожному графу'
     )
