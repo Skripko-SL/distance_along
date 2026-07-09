@@ -103,8 +103,12 @@ def load_grid(path):
     table = DBF(path, raw=True)
     points = []
     for r in table:
-        cx = float(r['left']) + 200
-        cy = float(r['top']) + 200
+        left = float(r['left'])
+        right = float(r['right'])
+        top = float(r['top'])
+        bottom = float(r['bottom'])
+        cx = (left + right) / 2
+        cy = (top + bottom) / 2
         lon = merc_x_to_lon(cx)
         lat = merc_y_to_lat(cy)
         points.append({

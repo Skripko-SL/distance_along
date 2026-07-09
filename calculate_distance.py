@@ -51,9 +51,11 @@ def load_grid(path):
     points = []
     for r in table:
         left = float(r['left'])
+        right = float(r['right'])
         top = float(r['top'])
-        cx = left + 200
-        cy = top + 200
+        bottom = float(r['bottom'])
+        cx = (left + right) / 2
+        cy = (top + bottom) / 2
         lon = merc_x_to_lon(cx)
         lat = merc_y_to_lat(cy)
         points.append({
