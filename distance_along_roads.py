@@ -2,17 +2,16 @@ from dbfread import DBF
 import shapefile
 import numpy as np
 from scipy.spatial import cKDTree
-from scipy.sparse import csr_matrix
-from scipy.sparse.csgraph import dijkstra, connected_components
-from collections import defaultdict, Counter
+from scipy.sparse import csr_matrix, vstack, hstack
+from scipy.sparse.csgraph import dijkstra
+from collections import defaultdict
 import math
 import csv
 import time
-import sys
 
 EARTH_RADIUS_M = 6371000
 MER = 20037508.34
-MERGE_RADIUS = 10.0
+NODE_PRECISION = 0
 
 def merc_x_to_lon(x):
     return x / MER * 180.0
@@ -30,6 +29,50 @@ def haversine(lat1, lon1, lat2, lon2):
 
 def decode(raw_bytes):
     return raw_bytes.decode('utf-8', errors='replace').strip()
+
+def project_point_to_polyline(px, py, polyline):
+    best_dist = float('inf')
+    best_foot_x = px
+    best_foot_y = py
+    best_frac = 0.0
+    total_len = 0.0
+    seg_lens = []
+
+    for i in range(len(polyline) - 1):
+        x1, y1 = polyline[i]
+        x2, y2 = polyline[i + 1]
+        dx, dy = x2 - x1, y2 - y1
+        seg_len = math.hypot(dx, dy)
+        seg_lens.append(seg_len)
+        total_len += seg_len if seg_len > 0 else 1e-10
+
+    cum_len = 0.0
+    for i in range(len(polyline) - 1):
+        x1, y1 = polyline[i]
+        x2, y2 = polyline[i + 1]
+        seg_len = seg_lens[i]
+        dx, dy = x2 - x1, y2 - y1
+
+        if seg_len < 1e-10:
+            foot_x, foot_y = x1, y1
+            t = 0.0
+        else:
+            t = ((px - x1) * dx + (py - y1) * dy) / (seg_len * seg_len)
+            t = max(0.0, min(1.0, t))
+            foot_x = x1 + t * dx
+            foot_y = y1 + t * dy
+
+        dist = math.hypot(px - foot_x, py - foot_y)
+        if dist < best_dist:
+            best_dist = dist
+            best_foot_x = foot_x
+            best_foot_y = foot_y
+            seg_frac = (cum_len + t * seg_len) / total_len if total_len > 0 else 0.0
+            best_frac = seg_frac
+
+        cum_len += seg_len
+
+    return best_dist, best_foot_x, best_foot_y, best_frac
 
 def load_schools(path):
     table = DBF(path, raw=True)
@@ -68,113 +111,112 @@ def load_grid(path):
         })
     return points
 
-def build_road_graph(shp_path):
+def build_road_graph_and_index(shp_path):
     print('  Чтение дорог...')
     t0 = time.time()
     sf = shapefile.Reader(shp_path)
     num_roads = sf.numRecords
     print(f'    Сегментов: {num_roads}')
 
-    endpoints = []
-    road_info = []
+    coord_to_idx = {}
+    nodes_list = []
+    edges = []
+    segments = []
+    all_vert_coords = []
+    vert_to_seg = []
+
     for i in range(num_roads):
         shape = sf.shape(i)
+        rec = sf.record(i)
         pts = shape.points
         if len(pts) < 2:
             continue
-        p1 = (round(pts[0][0], 2), round(pts[0][1], 2))
-        p2 = (round(pts[-1][0], 2), round(pts[-1][1], 2))
-        rec = sf.record(i)
+
         leght = float(rec['leght'])
         oneway = rec['oneway']
-        endpoints.append(p1)
-        endpoints.append(p2)
-        road_info.append((p1, p2, leght, oneway))
-    print(f'    Концов: {len(endpoints)}, за {time.time()-t0:.1f}с')
 
-    print(f'  Слияние концов в радиусе {MERGE_RADIUS}м...')
-    t0 = time.time()
-    eps = np.array(endpoints, dtype=np.float64)
-    tree = cKDTree(eps)
-    n = len(endpoints)
-    parent = list(range(n))
+        k1 = (round(pts[0][0], NODE_PRECISION), round(pts[0][1], NODE_PRECISION))
+        k2 = (round(pts[-1][0], NODE_PRECISION), round(pts[-1][1], NODE_PRECISION))
 
-    def find(x):
-        while parent[x] != x:
-            parent[x] = parent[parent[x]]
-            x = parent[x]
-        return x
+        for k in (k1, k2):
+            if k not in coord_to_idx:
+                coord_to_idx[k] = len(nodes_list)
+                nodes_list.append(k)
 
-    def union(x, y):
-        rx, ry = find(x), find(y)
-        if rx != ry:
-            parent[rx] = ry
+        n1, n2 = coord_to_idx[k1], coord_to_idx[k2]
 
-    for idx in range(n):
-        if idx % 50000 == 0:
-            print(f'      {idx}/{n}', end='\r')
-        neighbors = tree.query_ball_point(eps[idx], MERGE_RADIUS)
-        for ni in neighbors:
-            if ni > idx:
-                union(idx, ni)
-
-    print(f'      {n}/{n}')
-    root_to_nodes = defaultdict(set)
-    for i in range(n):
-        root_to_nodes[find(i)].add(i)
-
-    cluster_coords = {}
-    for root, node_set in root_to_nodes.items():
-        node_list = list(node_set)
-        xs = [eps[i][0] for i in node_list]
-        ys = [eps[i][1] for i in node_list]
-        canonical = (round(sum(xs) / len(xs), 2), round(sum(ys) / len(ys), 2))
-        cluster_coords[root] = canonical
-
-    print(f'    Узлов после слияния: {len(cluster_coords)}, за {time.time()-t0:.1f}с')
-
-    print('  Построение графа...')
-    t0 = time.time()
-    cluster_list = list(cluster_coords.values())
-    cluster_to_idx = {c: i for i, c in enumerate(cluster_list)}
-    cluster_tree = cKDTree(cluster_list)
-
-    n1_list = []
-    n2_list = []
-    leght_list = []
-    edge_set = set()
-
-    for p1, p2, leght, oneway in road_info:
-        _, i1 = cluster_tree.query(np.array([[p1[0], p1[1]]], dtype=np.float64))
-        _, i2 = cluster_tree.query(np.array([[p2[0], p2[1]]], dtype=np.float64))
-        n1, n2 = int(i1[0]), int(i2[0])
-        if n1 == n2:
-            continue
         if oneway == 'F':
-            if (n1, n2) not in edge_set:
-                edge_set.add((n1, n2))
-                n1_list.append(n1); n2_list.append(n2); leght_list.append(leght)
+            edges.append((n1, n2, leght))
         elif oneway == 'T':
-            if (n2, n1) not in edge_set:
-                edge_set.add((n2, n1))
-                n1_list.append(n2); n2_list.append(n1); leght_list.append(leght)
+            edges.append((n2, n1, leght))
         else:
-            if (n1, n2) not in edge_set and (n2, n1) not in edge_set:
-                edge_set.add((n1, n2))
-                n1_list.append(n1); n2_list.append(n2); leght_list.append(leght)
-                n1_list.append(n2); n2_list.append(n1); leght_list.append(leght)
+            edges.append((n1, n2, leght))
+            edges.append((n2, n1, leght))
 
-    print(f'    Узлов: {len(cluster_list)}, Рёбер: {len(edge_set)}, за {time.time()-t0:.1f}с')
+        seg_pts = [(p[0], p[1]) for p in pts]
+        seg_id = len(segments)
+        segments.append({
+            'id': seg_id,
+            'points': seg_pts,
+            'n1': n1,
+            'n2': n2,
+            'length': leght,
+            'oneway': oneway,
+        })
 
-    print('  Анализ связности...')
+        for p in pts:
+            all_vert_coords.append((p[0], p[1]))
+            vert_to_seg.append(seg_id)
+
+    num_nodes = len(nodes_list)
+    print(f'    Узлов: {num_nodes}, сегментов: {len(segments)}')
+    print(f'    Всего вершин полилиний: {len(all_vert_coords)}')
+    print(f'    Время: {time.time()-t0:.1f}с')
+
+    print('  Построение CSL-матрицы...')
     t0 = time.time()
-    graph = csr_matrix(
-        (leght_list, (n1_list, n2_list)),
-        shape=(len(cluster_list), len(cluster_list))
-    )
-    print(f'    Матрица построена за {time.time()-t0:.1f}с')
+    row = [e[0] for e in edges]
+    col = [e[1] for e in edges]
+    data = [e[2] for e in edges]
+    graph = csr_matrix((data, (row, col)), shape=(num_nodes, num_nodes))
+    print(f'    Матрица: {num_nodes}x{num_nodes}, рёбер: {len(edges)}, за {time.time()-t0:.1f}с')
 
-    return graph, cluster_list, cluster_tree
+    print('  Построение KD-дерева вершин...')
+    t0 = time.time()
+    vert_coords = np.array(all_vert_coords, dtype=np.float64)
+    vert_tree = cKDTree(vert_coords)
+    print(f'    {len(vert_coords)} точек, за {time.time()-t0:.1f}с')
+
+    return graph, nodes_list, segments, vert_tree, vert_to_seg
+
+def find_projection(px, py, segments, vert_tree, vert_to_seg, k=3):
+    dists, idxs = vert_tree.query(np.array([[px, py]]), k=k)
+    checked_segs = set()
+    best_dist = float('inf')
+    best_info = None
+
+    for idx in idxs[0]:
+        seg_id = vert_to_seg[idx]
+        if seg_id in checked_segs:
+            continue
+        checked_segs.add(seg_id)
+        seg = segments[seg_id]
+        perp, fx, fy, frac = project_point_to_polyline(px, py, seg['points'])
+
+        if perp < best_dist:
+            best_dist = perp
+            best_info = {
+                'seg_id': seg_id,
+                'perp': perp,
+                'foot_x': fx,
+                'foot_y': fy,
+                'frac': frac,
+                'n1': seg['n1'],
+                'n2': seg['n2'],
+                'length': seg['length'],
+            }
+
+    return best_info
 
 def main():
     base_dir = '/Users/skripko.sergey/Documents/Python/Graf/data'
@@ -182,9 +224,10 @@ def main():
     grid_path = f'{base_dir}/points_buff_400.dbf'
     roads_shp = f'{base_dir}/roads.shp'
     output_path = f'{base_dir}/grid_to_school_distance.csv'
+    K_NEAREST = 3
 
     print('=' * 60)
-    print('  РАСЧЁТ РАССТОЯНИЙ ПО ДОРОЖНОМУ ГРАФУ')
+    print('  РАССТОЯНИЕ ПО ДОРОГАМ: ПЕРПЕНДИКУЛЯР + ГРАФ + ПЕРПЕНДИКУЛЯР')
     print('=' * 60)
     print()
 
@@ -192,42 +235,102 @@ def main():
     t0 = time.time()
     schools = load_schools(school_path)
     grid_points = load_grid(grid_path)
-    print(f'  Школ: {len(schools)}, Точек сетки: {len(grid_points)}, за {time.time()-t0:.1f}с')
-    print()
-
-    print('[2] Построение дорожного графа...')
-    graph, cluster_list, cluster_tree = build_road_graph(roads_shp)
-    num_nodes = len(cluster_list)
-    print()
-
-    print('[3] Привязка школ к графу...')
-    t0 = time.time()
-    school_merc = np.array([[s['mx'], s['my']] for s in schools], dtype=np.float64)
-    _, school_nodes = cluster_tree.query(school_merc)
-    school_nodes = school_nodes.tolist()
-    print(f'  Школ привязано: {len(set(school_nodes))} уникальных узлов, за {time.time()-t0:.1f}с')
-    print()
-
-    print('[4] Мульти-источниковый Dijkstra...')
-    t0 = time.time()
-    sources = list(set(school_nodes))
-    dist_matrix = dijkstra(
-        csgraph=graph,
-        directed=False,
-        indices=sources,
-        min_only=True,
-    )
-    reachable_mask = np.isfinite(dist_matrix)
-    print(f'  Достижимо узлов: {np.sum(reachable_mask)} из {num_nodes} ({np.sum(reachable_mask)/num_nodes*100:.1f}%)')
-    if np.any(reachable_mask):
-        print(f'  Макс. расстояние: {np.max(dist_matrix[reachable_mask]):.0f} м')
+    print(f'  Школ: {len(schools)}, Точек сетки: {len(grid_points)}')
     print(f'  Время: {time.time()-t0:.1f}с')
     print()
 
-    print('[5] Привязка точек сетки к графу...')
+    print('[2] Построение графа и индекса...')
+    graph, nodes_list, segments, vert_tree, vert_to_seg = build_road_graph_and_index(roads_shp)
+    num_nodes = len(nodes_list)
+    print()
+
+    print(f'[3] Проекция школ на дороги (перпендикуляр)...')
     t0 = time.time()
-    grid_merc = np.array([[gp['mx'], gp['my']] for gp in grid_points], dtype=np.float64)
-    snap_dists, grid_nodes = cluster_tree.query(grid_merc)
+    school_node_min = {}  # node -> min distance from school to this node via any school
+    school_proj = []
+
+    for s in schools:
+        info = find_projection(s['mx'], s['my'], segments, vert_tree, vert_to_seg, K_NEAREST)
+        if info is None:
+            school_proj.append(None)
+            continue
+
+        frac = info['frac']
+        L = info['length']
+        dist_to_n1 = frac * L
+        dist_to_n2 = (1 - frac) * L
+
+        school_node_min[info['n1']] = min(
+            school_node_min.get(info['n1'], float('inf')),
+            info['perp'] + dist_to_n1
+        )
+        school_node_min[info['n2']] = min(
+            school_node_min.get(info['n2'], float('inf')),
+            info['perp'] + dist_to_n2
+        )
+
+        school_proj.append(info)
+
+    n_schools_projected = sum(1 for p in school_proj if p is not None)
+    n_school_nodes = len(school_node_min)
+    print(f'  Спроецировано школ: {n_schools_projected} из {len(schools)}')
+    print(f'  Уникальных узлов с доступом к школе: {n_school_nodes}')
+    print(f'  Время: {time.time()-t0:.1f}с')
+    print()
+
+    print('[4] Построение супер-источника и запуск Dijkstra...')
+    t0 = time.time()
+
+    # Создаём расширенную матрицу с виртуальным супер-узлом
+    virt_node = num_nodes
+    extended_n = num_nodes + 1
+
+    coo = graph.tocoo()
+    virt_rows, virt_cols, virt_data = [], [], []
+
+    for node, dist in school_node_min.items():
+        virt_rows.append(virt_node)
+        virt_cols.append(node)
+        virt_data.append(dist)
+        virt_rows.append(node)
+        virt_cols.append(virt_node)
+        virt_data.append(dist)
+
+    if virt_rows:
+        all_rows = np.concatenate([coo.row, virt_rows])
+        all_cols = np.concatenate([coo.col, virt_cols])
+        all_data = np.concatenate([coo.data, virt_data])
+        extended_graph = csr_matrix(
+            (all_data, (all_rows, all_cols)),
+            shape=(extended_n, extended_n)
+        )
+    else:
+        extended_graph = csr_matrix((extended_n, extended_n), dtype=np.float64)
+
+    dist_matrix = dijkstra(
+        csgraph=extended_graph,
+        directed=False,
+        indices=[virt_node],
+        min_only=True,
+    )
+
+    node_dist = dist_matrix[:num_nodes]
+    reachable = np.isfinite(node_dist)
+    print(f'  Супер-источник: {len(virt_rows)} связей')
+    print(f'  Достижимо узлов: {np.sum(reachable)} из {num_nodes} ({np.sum(reachable)/num_nodes*100:.1f}%)')
+    if np.any(reachable):
+        print(f'  Макс. расстояние: {np.max(node_dist[reachable]):.0f} м')
+    print(f'  Время: {time.time()-t0:.1f}с')
+    print()
+
+    print(f'[5] Проекция точек сетки на дороги (перпендикуляр)...')
+    t0 = time.time()
+    grid_proj = []
+    for gp in grid_points:
+        info = find_projection(gp['mx'], gp['my'], segments, vert_tree, vert_to_seg, K_NEAREST)
+        grid_proj.append(info)
+    n_grid_projected = sum(1 for p in grid_proj if p is not None)
+    print(f'  Спроецировано точек: {n_grid_projected} из {len(grid_points)}')
     print(f'  Время: {time.time()-t0:.1f}с')
     print()
 
@@ -241,39 +344,69 @@ def main():
         writer.writerow([
             'grid_point_id', 'grid_lon', 'grid_lat',
             'grid_col', 'grid_row',
-            'snap_dist_m',
+            'perp_dist_m',
             'road_dist_to_school_m',
+            'total_dist_m',
         ])
 
         for i, gp in enumerate(grid_points):
-            node_idx = int(grid_nodes[i])
-            snap_dist = float(snap_dists[i])
-            d_road = float(dist_matrix[node_idx]) if reachable_mask[node_idx] else -1
-            d_direct = haversine(gp['lat'], gp['lon'],
-                                  schools[school_nodes.index(node_idx)]['lat'],
-                                  schools[school_nodes.index(node_idx)]['lon']) if node_idx in school_nodes else haversine(
-                gp['lat'], gp['lon'],
-                schools[0]['lat'], schools[0]['lon']
-            )
+            g_info = grid_proj[i]
 
-            if d_road >= 0:
+            if g_info is None:
+                writer.writerow([
+                    gp['id'],
+                    f'{gp["lon"]:.8f}', f'{gp["lat"]:.8f}',
+                    gp['col_index'], gp['row_index'],
+                    '0.00', 'NaN', 'NaN',
+                ])
+                unreachable_count += 1
+                continue
+
+            perp_g = g_info['perp']
+            frac_g = g_info['frac']
+            L_g = g_info['length']
+            n1_g, n2_g = g_info['n1'], g_info['n2']
+
+            d_n1_g = frac_g * L_g
+            d_n2_g = (1 - frac_g) * L_g
+
+            road_dist = float('inf')
+            best_school_perp = 0
+
+            if reachable[n1_g]:
+                d = node_dist[n1_g] + d_n1_g
+                if d < road_dist:
+                    road_dist = d
+            if reachable[n2_g]:
+                d = node_dist[n2_g] + d_n2_g
+                if d < road_dist:
+                    road_dist = d
+
+            if road_dist < float('inf'):
+                total = perp_g + road_dist
                 reachable_count += 1
+                writer.writerow([
+                    gp['id'],
+                    f'{gp["lon"]:.8f}', f'{gp["lat"]:.8f}',
+                    gp['col_index'], gp['row_index'],
+                    f'{perp_g:.3f}',
+                    f'{road_dist:.3f}',
+                    f'{total:.3f}',
+                ])
             else:
+                writer.writerow([
+                    gp['id'],
+                    f'{gp["lon"]:.8f}', f'{gp["lat"]:.8f}',
+                    gp['col_index'], gp['row_index'],
+                    f'{perp_g:.3f}',
+                    'NaN', 'NaN',
+                ])
                 unreachable_count += 1
 
-            writer.writerow([
-                gp['id'],
-                f'{gp["lon"]:.8f}',
-                f'{gp["lat"]:.8f}',
-                gp['col_index'],
-                gp['row_index'],
-                f'{snap_dist:.2f}',
-                f'{d_road:.3f}' if d_road >= 0 else 'NaN',
-            ])
-
-    print(f'  Сохранено в {output_path} за {time.time()-t0:.1f}с')
+    print(f'  Сохранено в {output_path}')
     print(f'  Достижимо: {reachable_count} ({reachable_count/len(grid_points)*100:.1f}%)')
-    print(f'  Недостижимо: {unreachable_count} ({unreachable_count/len(grid_points)*100:.1f}%)')
+    print(f'  Недостижимо: {unreachable_count}')
+    print(f'  Время: {time.time()-t0:.1f}с')
     print()
     print('ГОТОВО!')
 
