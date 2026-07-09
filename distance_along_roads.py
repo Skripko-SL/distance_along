@@ -268,7 +268,7 @@ def main():
         description='Расчёт расстояний от объектов до опорной сетки по дорожному графу'
     )
     parser.add_argument('--objects', '-o',
-        default='/Users/skripko.sergey/Documents/Python/Graf/data/school.dbf',
+        required=True,
         help='Путь к DBF с объектами (поля: id, X, Y, опционально id_t)')
     parser.add_argument('--grid', '-g',
         default='/Users/skripko.sergey/Documents/Python/Graf/data/all_points.dbf',

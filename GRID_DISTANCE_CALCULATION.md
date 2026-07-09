@@ -223,7 +223,7 @@ id, X, Y
 python3 distance_along_roads.py --objects hospitals.dbf
 ```
 
-Результат: `all_points_to_<объекты>_distance.csv` (если сетка `all_points.dbf`).
+Результат: `all_points_to_hospitals_distance.csv`.
 
 ### Форматы входных данных
 
