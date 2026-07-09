@@ -20,9 +20,10 @@
 
 Проекция исходных данных — **WGS84 (EPSG:4326)**, координаты в десятичных градусах.
 
-### 2. Опорная сетка (points_buff_400.dbf / .shp)
+### 2. Опорная сетка (all_points.dbf)
 
-Регулярная сетка точек с шагом **400 метров** в проекции Web Mercator (EPSG:3857).
+Полная сетка точек переменного шага в проекции Web Mercator (EPSG:3857).
+Содержит 707 489 ячеек разного размера (200×200, 400×400, 1000×1000 м).
 
 | Поле | Тип | Описание |
 |------|-----|----------|
@@ -222,7 +223,7 @@ id, X, Y
 python3 distance_along_roads.py --objects hospitals.dbf
 ```
 
-Результат: `all_points_to_hospitals_distance.csv` (если сетка `all_points.dbf`).
+Результат: `all_points_to_<объекты>_distance.csv` (если сетка `all_points.dbf`).
 
 ### Форматы входных данных
 
@@ -260,8 +261,7 @@ pip3 install scipy numpy dbfread pyshp
 | `RUN_INSTRUCTION.md` | Инструкция пользователя |
 | `school.dbf` | Исходные данные — 821 школа |
 | `school.shp` / `.shx` / `.prj` / `.cpg` | Shape-файл школ |
-| `points_buff_400.dbf` | Опорная сетка — 114 232 точки |
-| `all_points.dbf` | Полная сетка — 707 489 точек |
+| `all_points.dbf` | Опорная сетка — 707 489 точек |
 | `roads.shp` / `.dbf` / `.shx` | Дорожная сеть (219 187 сегментов) |
 | `all_points_to_school_distance.csv` | Результат расчёта (дорожный граф) |
 | `GRID_DISTANCE_CALCULATION.md` | Данный файл — описание методологии |

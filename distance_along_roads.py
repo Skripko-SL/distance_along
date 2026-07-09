@@ -271,7 +271,7 @@ def main():
         default='/Users/skripko.sergey/Documents/Python/Graf/data/school.dbf',
         help='Путь к DBF с объектами (поля: id, X, Y, опционально id_t)')
     parser.add_argument('--grid', '-g',
-        default='/Users/skripko.sergey/Documents/Python/Graf/data/points_buff_400.dbf',
+        default='/Users/skripko.sergey/Documents/Python/Graf/data/all_points.dbf',
         help='Путь к DBF с опорной сеткой')
     parser.add_argument('--roads', '-r',
         default='/Users/skripko.sergey/Documents/Python/Graf/data/roads.shp',

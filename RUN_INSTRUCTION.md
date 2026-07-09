@@ -1,19 +1,23 @@
-# Инструкция по запуску расчёта расстояний
+ # Инструкция по запуску расчёта расстояний
 
 ## 1. Расчёт по дорожному графу (основной скрипт)
 
 ```bash
-python3 distance_along_roads.py --objects school.dbf --grid all_points.dbf
+# школы → полная сетка (по умолчанию)
+python3 distance_along_roads.py
+
+# больницы → полная сетка
+python3 distance_along_roads.py --objects hospitals.dbf
 ```
 
-Результат: `all_points_to_school_distance.csv`
+Результат: `<сетка>_to_<объекты>_distance.csv` (например `all_points_to_school_distance.csv`).
 
 ### Параметры
 
 | Флаг | Назначение | По умолчанию |
 |------|-----------|-------------|
 | `--objects, -o` | DBF с целевыми объектами (id, X, Y, опц. id_t) | `school.dbf` |
-| `--grid, -g` | DBF опорной сетки (left, top, right, bottom, col_index, row_index) | `points_buff_400.dbf` |
+| `--grid, -g` | DBF опорной сетки (left, top, right, bottom, col_index, row_index) | `all_points.dbf` |
 | `--roads, -r` | Shapefile дорожной сети | `roads.shp` |
 | `--output, -O` | Выходной CSV | `<сетка>_to_<объекты>_distance.csv` |
 | `--k, -k` | Число кандидатов KD-дерева | 3 |
@@ -21,14 +25,14 @@ python3 distance_along_roads.py --objects school.dbf --grid all_points.dbf
 ### Примеры
 
 ```bash
-# больницы → полная сетка
-python3 distance_along_roads.py --objects hospitals.dbf --grid all_points.dbf
-
-# школы → сетка 400м, свой выходной файл
-python3 distance_along_roads.py -o school.dbf -g points_buff_400.dbf -O result.csv
-
-# по умолчанию (школы → points_buff_400)
+# школы → полная сетка
 python3 distance_along_roads.py
+
+# больницы → полная сетка
+python3 distance_along_roads.py --objects hospitals.dbf
+
+# свой выходной файл
+python3 distance_along_roads.py -o school.dbf -O result.csv
 ```
 
 ### Что делает скрипт
