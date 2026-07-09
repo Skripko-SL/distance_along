@@ -88,3 +88,35 @@ python3 distance_along_roads.py -o school.dbf -O result.csv
 
 Размер ячейки может быть любым (200×200, 400×400, 1000×1000 и т.д.) — центр вычисляется как `(left+right)/2`.
 
+---
+
+## 3. Требования к среде
+
+```bash
+pip3 install scipy numpy dbfread pyshp
+```
+
+---
+
+## 4. Сборка .exe для Windows (без Python на целевой машине)
+
+Сборка через GitHub Actions — готовый `.exe` со всеми зависимостями внутри.
+
+### Как получить .exe
+
+1. Залить код на GitHub (например, `git push origin main`)
+2. Перейти в репозиторий → Actions → **Build road_distance.exe**
+3. Скачать артефакт `road_distance`, внутри `road_distance.exe`
+4. Разместить `.exe` и файлы данных (`*.dbf`, `roads.*`) в одной папке на Windows
+
+На Windows не нужен Python и никакие библиотеки — всё упаковано в `.exe`.
+
+### Запуск на Windows
+
+```cmd
+road_distance.exe --objects school.dbf
+road_distance.exe --objects hospitals.dbf --grid all_points.dbf --roads roads.shp
+```
+
+Параметры те же, что в разделе 1.
+
