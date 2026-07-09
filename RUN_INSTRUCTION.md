@@ -16,9 +16,9 @@ python3 distance_along_roads.py --objects hospitals.dbf
 
 | Флаг | Назначение | По умолчанию |
 |------|-----------|-------------|
-| `--objects, -o` | DBF с объектами (id, X, Y, опц. id_t) | `school.dbf` |
-| `--grid, -g` | DBF опорной сетки (left, top, right, bottom, col_index, row_index) | `all_points.dbf` |
-| `--roads, -r` | Shapefile дорожной сети | `roads.shp` |
+| `--objects, -o` | DBF с объектами (id, xcoord, ycoord, опц. id_t) | `school.dbf` |
+| `--grid, -g` | DBF опорной сетки (xcoord, ycoord, col_index, row_index) | `all_points.dbf` |
+| `--roads, -r` | Shapefile дорожной сети | `a_graf.shp` |
 | `--output, -O` | Выходной CSV | `<каталог_сетки>/<сетка>_to_<объекты>_distance.csv` |
 | `--k, -k` | Число кандидатов KD-дерева | 3 |
 
@@ -34,7 +34,7 @@ python3 distance_along_roads.py
 python3 distance_along_roads.py --objects hospitals.dbf
 
 # всё явно
-python3 distance_along_roads.py --objects school.dbf --grid all_points.dbf --roads roads.shp
+python3 distance_along_roads.py --objects school.dbf --grid all_points.dbf --roads a_graf.shp
 
 # свой выходной файл
 python3 distance_along_roads.py -o school.dbf -O result.csv
@@ -73,20 +73,18 @@ python3 distance_along_roads.py -o school.dbf -O result.csv
 | Поле | Тип | Обязательно | Описание |
 |------|-----|------------|----------|
 | `id` | Число | да | Уникальный ID объекта |
-| `X` | Число | да | Долгота (WGS84, градусы) |
-| `Y` | Число | да | Широта (WGS84, градусы) |
+| `xcoord` | Число | да | X-координата (EPSG:3857, метры) |
+| `ycoord` | Число | да | Y-координата (EPSG:3857, метры) |
 | `id_t` | Строка | нет | Строковый идентификатор |
 
 ### Для сетки
 
 | Поле | Тип | Описание |
 |------|-----|----------|
-| `left`, `right` | Число | Границы ячейки по X (EPSG:3857, метры) |
-| `top`, `bottom` | Число | Границы ячейки по Y (EPSG:3857, метры) |
+| `xcoord` | Число | X-координата точки (EPSG:3857, метры) |
+| `ycoord` | Число | Y-координата точки (EPSG:3857, метры) |
 | `col_index` | Число | Индекс колонки |
 | `row_index` | Число | Индекс строки |
-
-Размер ячейки может быть любым (200×200, 400×400, 1000×1000 и т.д.) — центр вычисляется как `(left+right)/2`.
 
 ---
 
@@ -115,7 +113,7 @@ pip3 install scipy numpy dbfread pyshp
 
 ```cmd
 road_distance.exe --objects school.dbf
-road_distance.exe --objects hospitals.dbf --grid all_points.dbf --roads roads.shp
+road_distance.exe --objects hospitals.dbf --grid all_points.dbf --roads a_graf.shp
 ```
 
 Параметры те же, что в разделе 1.

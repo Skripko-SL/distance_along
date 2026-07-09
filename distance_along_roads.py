@@ -84,12 +84,12 @@ def load_objects(path):
     has_id_t = 'id_t' in field_names
     objects = []
     for r in table:
-        sx = float(r['X']) / 180 * MER
-        sy = MER / math.pi * math.log(math.tan(math.pi / 4 + math.radians(float(r['Y'])) / 2))
+        sx = float(r['xcoord'])
+        sy = float(r['ycoord'])
         obj = {
             'id': int(r['id']),
-            'lon': float(decode(r['X'])),
-            'lat': float(decode(r['Y'])),
+            'lon': merc_x_to_lon(sx),
+            'lat': merc_y_to_lat(sy),
             'mx': sx,
             'my': sy,
         }
@@ -104,12 +104,8 @@ def load_grid(path):
     table = DBF(path, raw=True)
     points = []
     for r in table:
-        left = float(r['left'])
-        right = float(r['right'])
-        top = float(r['top'])
-        bottom = float(r['bottom'])
-        cx = (left + right) / 2
-        cy = (top + bottom) / 2
+        cx = float(r['xcoord'])
+        cy = float(r['ycoord'])
         lon = merc_x_to_lon(cx)
         lat = merc_y_to_lat(cy)
         points.append({
@@ -279,7 +275,7 @@ def main():
         default=os.path.join(script_dir, 'all_points.dbf'),
         help='Путь к DBF с опорной сеткой')
     parser.add_argument('--roads', '-r',
-        default=os.path.join(script_dir, 'roads.shp'),
+        default=os.path.join(script_dir, 'a_graf.shp'),
         help='Путь к shapefile дорожной сети')
     parser.add_argument('--output', '-O',
         default=None,
