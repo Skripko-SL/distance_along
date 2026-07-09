@@ -105,7 +105,7 @@ pip3 install scipy numpy dbfread pyshp
 1. Залить код на GitHub (например, `git push origin main`)
 2. Перейти в репозиторий → Actions → **Build road_distance.exe**
 3. Скачать артефакт `road_distance`, внутри `road_distance.exe`
-4. Разместить `.exe` и файлы данных (`*.dbf`, `roads.*`) в одной папке на Windows
+4. Разместить `.exe` и файлы данных (`*.dbf`, `a_graf.*`) в одной папке на Windows
 
 На Windows не нужен Python и никакие библиотеки — всё упаковано в `.exe`.
 
