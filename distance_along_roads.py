@@ -271,14 +271,14 @@ def main():
         required=True,
         help='Путь к DBF с объектами (поля: id, X, Y, опционально id_t)')
     parser.add_argument('--grid', '-g',
-        default='/Users/skripko.sergey/Documents/Python/Graf/data/all_points.dbf',
+        required=True,
         help='Путь к DBF с опорной сеткой')
     parser.add_argument('--roads', '-r',
-        default='/Users/skripko.sergey/Documents/Python/Graf/data/roads.shp',
+        required=True,
         help='Путь к shapefile дорожной сети')
     parser.add_argument('--output', '-O',
         default=None,
-        help='Выходной CSV (по умолч.: <каталог_сетки>/grid_to_<имя_объектов>_distance.csv)')
+        help='Выходной CSV (по умолч.: <каталог_сетки>/<сетка>_to_<объекты>_distance.csv)')
     parser.add_argument('--k', '-k', type=int, default=3,
         help='Количество кандидатов KD-дерева (по умолч.: 3)')
     args = parser.parse_args()

@@ -4,44 +4,44 @@
 
 ```bash
 # школы → полная сетка
-python3 distance_along_roads.py --objects school.dbf
+python3 distance_along_roads.py --objects school.dbf --grid all_points.dbf --roads roads.shp
 
 # больницы → полная сетка
-python3 distance_along_roads.py --objects hospitals.dbf
+python3 distance_along_roads.py --objects hospitals.dbf --grid all_points.dbf --roads roads.shp
 ```
 
-Результат: `all_points_to_<объекты>_distance.csv`.
+Результат: `<сетка>_to_<объекты>_distance.csv` (например `all_points_to_school_distance.csv`).
 
 ### Параметры
 
 | Флаг | Назначение | По умолчанию |
 |------|-----------|-------------|
 | `--objects, -o` | DBF с объектами (id, X, Y, опц. id_t) | **обязательный** |
-| `--grid, -g` | DBF опорной сетки | `all_points.dbf` |
-| `--roads, -r` | Shapefile дорожной сети | `roads.shp` |
-| `--output, -O` | Выходной CSV | `<сетка>_to_<объекты>_distance.csv` |
+| `--grid, -g` | DBF опорной сетки (left, top, right, bottom, col_index, row_index) | **обязательный** |
+| `--roads, -r` | Shapefile дорожной сети | **обязательный** |
+| `--output, -O` | Выходной CSV | `<каталог_сетки>/<сетка>_to_<объекты>_distance.csv` |
 | `--k, -k` | Число кандидатов KD-дерева | 3 |
 
 ### Примеры
 
 ```bash
 # школы → полная сетка
-python3 distance_along_roads.py --objects school.dbf
+python3 distance_along_roads.py --objects school.dbf --grid all_points.dbf --roads roads.shp
 
 # больницы → полная сетка
-python3 distance_along_roads.py --objects hospitals.dbf
+python3 distance_along_roads.py --objects hospitals.dbf --grid all_points.dbf --roads roads.shp
 
 # свой выходной файл
-python3 distance_along_roads.py -o school.dbf -O result.csv
+python3 distance_along_roads.py -o school.dbf -g all_points.dbf -r roads.shp -O result.csv
 ```
 
 ### Что делает скрипт
 
-1. Строит дорожный граф из всех вершин полилиний roads.shp
+1. Строит дорожный граф из всех вершин полилиний — roads
 2. Проецирует каждый объект на ближайший сегмент дороги (перпендикуляр)
-3. Запускает Дейкстру от супер-источника — для каждого узла графа находит минимальное расстояние до любого объекта
+3. Запускает Дейкстру от супер-источника — для каждого узла графа минимальное расстояние до любого объекта
 4. Проецирует каждую точку сетки на дорогу
-5. Для каждой точки считает: `total = перп_точки + расстояние_по_графу`
+5. Для каждой точки: `total = перп_точки + расстояние_по_графу`
 6. Сохраняет CSV
 
 ### Выходной CSV
@@ -83,10 +83,3 @@ python3 distance_along_roads.py -o school.dbf -O result.csv
 
 Размер ячейки может быть любым (200×200, 400×400, 1000×1000 и т.д.) — центр вычисляется как `(left+right)/2`.
 
----
-
-## 3. Требования к среде
-
-```bash
-pip3 install scipy numpy dbfread pyshp
-```
