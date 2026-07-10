@@ -17,10 +17,10 @@ jobs:
           python-version: '3.12'
 
       - name: Install deps
-        run: pip install pyinstaller scipy numpy dbfread pyshp
+        run: pip install pyinstaller scipy numpy dbfread pyshp pyproj
 
       - name: Build
-        run: pyinstaller --onefile --name road_distance.exe distance_along_roads.py
+        run: pyinstaller --onefile --collect-data pyproj --name road_distance.exe distance_along_roads.py
 
       - uses: actions/upload-artifact@v4
         with:

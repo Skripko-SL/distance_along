@@ -11,10 +11,22 @@ import numpy as np
 from scipy.spatial import cKDTree
 from scipy.sparse import csr_matrix
 from scipy.sparse.csgraph import dijkstra
+from pyproj import Transformer
 
 EARTH_RADIUS_M = 6371000
 MER = 20037508.34
 VERTEX_PRECISION = 1
+
+# Исходные данные хранятся в EPSG:3857 (Web Mercator) — эта проекция сохраняет
+# углы, но искажает расстояния в 1/cos(широта) раз (на широте Нижегородской
+# области, ~54.5-58°с.ш., искажение ×1.72-1.89). Все geometric-расчёты
+# (перпендикуляры, рёбра графа) должны вестись в равнопромежуточной проекции —
+# используем UTM 38N (EPSG:32638), который покрывает область почти без
+# искажений.
+MERC_TO_UTM = Transformer.from_crs('EPSG:3857', 'EPSG:32638', always_xy=True)
+
+def merc_to_utm(x, y):
+    return MERC_TO_UTM.transform(x, y)
 
 def merc_x_to_lon(x):
     return x / MER * 180.0
@@ -82,16 +94,19 @@ def load_objects(path):
     table = DBF(path, raw=True)
     field_names = list(table.field_names)
     has_id_t = 'id_t' in field_names
+    rows = list(table)
+    sx_arr = np.array([float(r['xcoord']) for r in rows])
+    sy_arr = np.array([float(r['ycoord']) for r in rows])
+    ux_arr, uy_arr = merc_to_utm(sx_arr, sy_arr)
+
     objects = []
-    for r in table:
-        sx = float(r['xcoord'])
-        sy = float(r['ycoord'])
+    for r, sx, sy, ux, uy in zip(rows, sx_arr, sy_arr, ux_arr, uy_arr):
         obj = {
             'id': int(r['id']),
             'lon': merc_x_to_lon(sx),
             'lat': merc_y_to_lat(sy),
-            'mx': sx,
-            'my': sy,
+            'mx': ux,
+            'my': uy,
         }
         if has_id_t:
             obj['id_t'] = decode(r['id_t'])
@@ -102,18 +117,19 @@ def load_objects(path):
 
 def load_grid(path):
     table = DBF(path, raw=True)
+    rows = list(table)
+    cx_arr = np.array([float(r['xcoord']) for r in rows])
+    cy_arr = np.array([float(r['ycoord']) for r in rows])
+    ux_arr, uy_arr = merc_to_utm(cx_arr, cy_arr)
+
     points = []
-    for r in table:
-        cx = float(r['xcoord'])
-        cy = float(r['ycoord'])
-        lon = merc_x_to_lon(cx)
-        lat = merc_y_to_lat(cy)
+    for r, cx, cy, ux, uy in zip(rows, cx_arr, cy_arr, ux_arr, uy_arr):
         points.append({
             'id': int(r['id']),
-            'mx': cx,
-            'my': cy,
-            'lon': lon,
-            'lat': lat,
+            'mx': ux,
+            'my': uy,
+            'lon': merc_x_to_lon(cx),
+            'lat': merc_y_to_lat(cy),
             'col_index': int(r['col_index']),
             'row_index': int(r['row_index']),
         })
@@ -126,19 +142,30 @@ def build_road_graph(shp_path):
     num_roads = sf.numRecords
     print(f'    Сегментов: {num_roads}')
 
+    raw_shapes = [sf.shape(i).points for i in range(num_roads)]
+
+    print('  Перепроецирование EPSG:3857 -> UTM 38N (EPSG:32638)...')
+    flat_x, flat_y, shape_offsets = [], [], [0]
+    for pts in raw_shapes:
+        for p in pts:
+            flat_x.append(p[0])
+            flat_y.append(p[1])
+        shape_offsets.append(len(flat_x))
+    ux_all, uy_all = merc_to_utm(np.array(flat_x), np.array(flat_y))
+
     coord_to_idx = {}
     nodes_list = []
     all_rows, all_cols, all_data = [], [], []
     segment_vert_indices = []
-    all_vert_merc = []
+    all_vert_utm = []
     vert_to_seg = []
 
     total_vertices = 0
     total_edges = 0
 
     for i in range(num_roads):
-        pts = sf.shape(i).points
-        if len(pts) < 2:
+        start, end = shape_offsets[i], shape_offsets[i + 1]
+        if end - start < 2:
             segment_vert_indices.append([])
             continue
 
@@ -146,7 +173,8 @@ def build_road_graph(shp_path):
         prev_idx = None
         prev_p = None
 
-        for p in pts:
+        for j in range(start, end):
+            p = (ux_all[j], uy_all[j])
             key = (round(p[0], VERTEX_PRECISION), round(p[1], VERTEX_PRECISION))
             if key not in coord_to_idx:
                 coord_to_idx[key] = len(nodes_list)
@@ -154,7 +182,7 @@ def build_road_graph(shp_path):
             curr_idx = coord_to_idx[key]
             seg_idx_list.append(curr_idx)
 
-            all_vert_merc.append((p[0], p[1]))
+            all_vert_utm.append(p)
             vert_to_seg.append(i)
 
             if prev_idx is not None and curr_idx != prev_idx:
@@ -187,7 +215,7 @@ def build_road_graph(shp_path):
 
     print('  Построение KD-дерева вершин...')
     t0 = time.time()
-    vert_coords = np.array(all_vert_merc, dtype=np.float64)
+    vert_coords = np.array(all_vert_utm, dtype=np.float64)
     vert_tree = cKDTree(vert_coords)
     print(f'    {len(vert_coords)} точек, за {time.time()-t0:.1f}с')
 
