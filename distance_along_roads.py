@@ -142,6 +142,24 @@ def build_road_graph(shp_path):
     num_roads = sf.numRecords
     print(f'    Сегментов: {num_roads}')
 
+    # Направленность рёбер учитывается только для a_graf.shp (см. п.4
+    # GRID_DISTANCE_CALCULATION.md: oneway='F' — только вперёд по порядку
+    # вершин полилинии, 'T' — только назад, 'B'/иное — двусторонне).
+    # Для roads.shp (и любого другого имени) направленность игнорируется —
+    # рёбра всегда двусторонние, как раньше.
+    roads_stem = os.path.splitext(os.path.basename(shp_path))[0].lower()
+    honor_oneway = (roads_stem == 'a_graf')
+    if honor_oneway:
+        print('  Формат a_graf: направленность (oneway) рёбер учитывается')
+        oneway_list = [r['oneway'] for r in sf.records()]
+    else:
+        if roads_stem != 'roads':
+            print(f'  Внимание: неизвестное имя файла дорог "{roads_stem}" — '
+                  f'направленность (oneway) игнорируется, как для roads.shp')
+        else:
+            print('  Формат roads: направленность (oneway) игнорируется')
+        oneway_list = None
+
     raw_shapes = [sf.shape(i).points for i in range(num_roads)]
 
     print('  Перепроецирование EPSG:3857 -> UTM 38N (EPSG:32638)...')
@@ -163,11 +181,20 @@ def build_road_graph(shp_path):
     total_vertices = 0
     total_edges = 0
 
+    total_oneway_f = 0
+    total_oneway_t = 0
+
     for i in range(num_roads):
         start, end = shape_offsets[i], shape_offsets[i + 1]
         if end - start < 2:
             segment_vert_indices.append([])
             continue
+
+        oneway_val = oneway_list[i] if honor_oneway else 'B'
+        if oneway_val == 'F':
+            total_oneway_f += 1
+        elif oneway_val == 'T':
+            total_oneway_t += 1
 
         seg_idx_list = []
         prev_idx = None
@@ -188,10 +215,24 @@ def build_road_graph(shp_path):
             if prev_idx is not None and curr_idx != prev_idx:
                 dist = euclidean_dist(p[0], p[1], prev_p[0], prev_p[1])
                 if dist > 0:
-                    all_rows.extend([prev_idx, curr_idx])
-                    all_cols.extend([curr_idx, prev_idx])
-                    all_data.extend([dist, dist])
-                    total_edges += 2
+                    # 'F' — только по порядку вершин (prev -> curr), 'T' —
+                    # только в обратную сторону (curr -> prev), иначе (в т.ч.
+                    # 'B') — двустороннее ребро, как раньше.
+                    if oneway_val == 'F':
+                        all_rows.append(prev_idx)
+                        all_cols.append(curr_idx)
+                        all_data.append(dist)
+                        total_edges += 1
+                    elif oneway_val == 'T':
+                        all_rows.append(curr_idx)
+                        all_cols.append(prev_idx)
+                        all_data.append(dist)
+                        total_edges += 1
+                    else:
+                        all_rows.extend([prev_idx, curr_idx])
+                        all_cols.extend([curr_idx, prev_idx])
+                        all_data.extend([dist, dist])
+                        total_edges += 2
 
             prev_idx = curr_idx
             prev_p = p
@@ -202,6 +243,8 @@ def build_road_graph(shp_path):
     num_nodes = len(nodes_list)
     print(f'    Узлов: {num_nodes}')
     print(f'    Рёбер: {total_edges}')
+    if honor_oneway:
+        print(f'    Из них односторонних сегментов: F={total_oneway_f}, T={total_oneway_t}')
     print(f'    Всего вершин (с дублями): {total_vertices}')
     print(f'    Время: {time.time()-t0:.1f}с')
 
@@ -398,8 +441,15 @@ def main():
     all_data = np.concatenate([coo.data, virt_data])
     ext_graph = csr_matrix((all_data, (all_rows, all_cols)), shape=(extended_n, extended_n))
 
+    # graph хранит рёбра в направлении, РЕАЛЬНО разрешённом движением (с учётом
+    # oneway для a_graf; для roads.shp/неизвестных файлов рёбра и так
+    # двусторонние — транспонирование для них не меняет ничего). Нам нужно
+    # расстояние «от точки сетки к школе» (движение ПРОТИВ направления
+    # построения дерева кратчайших путей от супер-источника), поэтому Dijkstra
+    # запускается на транспонированном графе с directed=True — это стандартный
+    # приём для одностороннего графа с фиксированным конечным узлом.
     dist_matrix_2d, predecessors_2d = dijkstra(
-        csgraph=ext_graph, directed=False, indices=[virt_node],
+        csgraph=ext_graph.transpose().tocsr(), directed=True, indices=[virt_node],
         return_predecessors=True
     )
     node_dist = dist_matrix_2d[0, :num_nodes]
