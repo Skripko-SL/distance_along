@@ -1,4 +1,4 @@
-name: Build road_distance.exe
+name: Build road_distance.exe и road_time.exe
 
 on:
   push:
@@ -19,10 +19,18 @@ jobs:
       - name: Install deps
         run: pip install pyinstaller scipy numpy dbfread pyshp pyproj
 
-      - name: Build
+      - name: Build road_distance.exe
         run: pyinstaller --onefile --collect-data pyproj --name road_distance.exe distance_along_roads.py
+
+      - name: Build road_time.exe
+        run: pyinstaller --onefile --collect-data pyproj --name road_time.exe time_along_roads.py
 
       - uses: actions/upload-artifact@v4
         with:
           name: road_distance
           path: dist/road_distance.exe
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: road_time
+          path: dist/road_time.exe

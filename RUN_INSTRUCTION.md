@@ -1,4 +1,47 @@
-# Инструкция по запуску расчёта расстояний
+# Инструкция по запуску расчёта расстояний и путевого времени
+
+## Шпаргалка (быстрый старт)
+
+**Готовые команды — просто скопировать:**
+
+```cmd
+:: школы (все файлы по умолчанию лежат рядом с .exe)
+road_distance.exe
+
+:: другой объект (больницы, поликлиники и т.п.)
+road_distance.exe --objects hospitals.dbf
+
+:: явно с учётом направленности дорог (oneway) — рекомендуемый вариант
+road_distance.exe --objects school.dbf --grid all_points.dbf --roads a_graf.shp
+```
+
+**Какой файл в какой параметр класть:**
+
+| Параметр | Что туда класть | Пример файла | Обязательные поля в DBF |
+|---|---|---|---|
+| `--objects` | точки объектов (школы, больницы...) | `school.dbf` | `id`, `xcoord`, `ycoord` |
+| `--grid` | опорная сетка точек | `all_points.dbf` | `xcoord`, `ycoord`, `col_index`, `row_index` |
+| `--roads` | дорожная сеть (линии) | `a_graf.shp` или `roads.shp` | `oneway` + геометрия `.shp` |
+
+⚠️ **Частая ошибка:** подставить дорожный файл (`roads.dbf`/`a_graf.dbf`) в `--grid` или `--objects`, или наоборот — файл точек в `--roads`. Это разные по структуре таблицы (у дорог нет `xcoord`/`ycoord`, у точек нет `oneway`), скрипт упадёт с ошибкой чтения поля или `ShapefileException`. Всегда сверяйтесь с таблицей выше.
+
+⚠️ **Про `--roads`:** если не указывать `--roads` явно, по умолчанию используется `a_graf.shp` — со всеми тремя файлами (`a_graf.shp`, `.dbf`, `.shx`) он должен лежать рядом с `.exe`. Если рядом лежит только `roads.*` (а `a_graf.*` нет), обязательно указывайте `--roads roads.shp`, иначе будет ошибка `Neither a_graf.dbf nor a_graf.shp could be opened`.
+
+⚠️ **Разница `a_graf.shp` vs `roads.shp`:** обе годятся для `--roads`, но `a_graf.shp` учитывает направленность дорог (одностороннее движение), а `roads.shp` — нет (все дороги двусторонние). При сомнениях используйте `a_graf.shp`.
+
+**Расчёт путевого времени вместо расстояния** (`road_time.exe` / `time_along_roads.py`):
+
+```cmd
+:: школы (все файлы по умолчанию лежат рядом с .exe)
+road_time.exe
+
+:: явно
+road_time.exe --objects school.dbf --grid all_points.dbf --roads a_graf.shp
+```
+
+⚠️ Работает **только** с `a_graf.shp` (нужны поля `oneway` и `speed`) — `roads.shp` не подходит, скрипт/`.exe` сразу завершится с ошибкой.
+
+---
 
 ## 1. Расчёт по дорожному графу (основной скрипт)
 
@@ -67,7 +110,57 @@ python3 distance_along_roads.py -o school.dbf -O result.csv
 
 ---
 
-## 2. Формат входных DBF
+## 2. Расчёт минимального путевого времени (`time_along_roads.py`)
+
+```bash
+# школы (все пути по умолчанию)
+python3 time_along_roads.py
+
+# другой объект
+python3 time_along_roads.py --objects hospitals.dbf
+```
+
+Результат: `<сетка>_to_<объекты>_time.csv` (например `all_points_to_school_time.csv`).
+
+⚠️ В отличие от `distance_along_roads.py`, работает **только** с `a_graf.shp` — обязательны поля `oneway` и `speed` (скорость сегмента, км/ч). Если указать `--roads roads.shp` (там нет `speed`), скрипт завершится с понятной ошибкой.
+
+### Параметры
+
+| Флаг | Назначение | По умолчанию |
+|------|-----------|-------------|
+| `--objects, -o` | DBF с объектами (id, xcoord, ycoord, опц. id_t) | `school.dbf` |
+| `--grid, -g` | DBF опорной сетки (xcoord, ycoord, col_index, row_index) | `all_points.dbf` |
+| `--roads, -r` | Shapefile автомобильного графа (нужны `oneway`, `speed`) | `a_graf.shp` |
+| `--output, -O` | Выходной CSV | `<каталог_сетки>/<сетка>_to_<объекты>_time.csv` |
+| `--k, -k` | Число кандидатов KD-дерева | 3 |
+
+### Что делает скрипт
+
+Та же геометрия, что в `distance_along_roads.py` (перепроекция в UTM 38N, KD-дерево, перпендикуляр, брекетинг, супер-источник + Dijkstra), но веса рёбер графа — **секунды**, а не метры:
+
+1. Перпендикуляр от объекта/точки сетки до дороги переводится в секунды по пешеходной скорости **1.4 м/с** (константа `WALK_SPEED_MPS`).
+2. Движение по самой дороге (рёбра графа и частичные отрезки от узла-скобки до подошвы перпендикуляра) переводится в секунды по скорости **того сегмента дороги**, на который спроецирована точка (`speed`, км/ч → м/с).
+3. `total_time_s = grid_point_time_s + network_time_s`, где `network_time_s` уже включает перпендикуляр и движение по дороге со стороны объекта.
+
+### Выходной CSV
+
+| Колонка | Описание |
+|---------|----------|
+| `grid_point_id` | ID точки сетки |
+| `grid_lon`, `grid_lat` | Координаты центра ячейки (WGS84) |
+| `grid_col`, `grid_row` | Позиция в сетке |
+| `perp_dist_m` | Перпендикуляр от точки до дороги (м) |
+| `grid_point_time_s` | Время пешком от точки до дороги (с) = `perp_dist_m / 1.4` |
+| `network_time_s` | Время движения по дороге до ближайшего объекта (с) |
+| `total_time_s` | Итого: `grid_point_time_s + network_time_s` (с) |
+| `source_id` | ID ближайшего объекта |
+| `source_id_t` | Строковый ID ближайшего объекта |
+
+Недостижимые точки: `network_time_s` = `NaN`, `total_time_s` = `NaN`.
+
+---
+
+## 3. Формат входных DBF
 
 Любой DBF-файл с полями:
 
@@ -89,7 +182,7 @@ python3 distance_along_roads.py -o school.dbf -O result.csv
 
 ---
 
-## 3. Требования к среде
+## 4. Требования к среде
 
 ```bash
 pip3 install scipy numpy dbfread pyshp pyproj
@@ -97,16 +190,16 @@ pip3 install scipy numpy dbfread pyshp pyproj
 
 ---
 
-## 4. Сборка .exe для Windows (без Python на целевой машине)
+## 5. Сборка .exe для Windows (без Python на целевой машине)
 
-Сборка через GitHub Actions — готовый `.exe` со всеми зависимостями внутри.
+Сборка через GitHub Actions — готовые `.exe` со всеми зависимостями внутри. Один workflow собирает сразу два файла: `road_distance.exe` (расстояния, `distance_along_roads.py`) и `road_time.exe` (путевое время, `time_along_roads.py`).
 
 ### Как получить .exe
 
 1. Залить код на GitHub (например, `git push origin main`)
-2. Перейти в репозиторий → Actions → **Build road_distance.exe**
-3. Скачать артефакт `road_distance`, внутри `road_distance.exe`
-4. Разместить `.exe` и файлы данных (`*.dbf`, `a_graf.*`) в одной папке на Windows
+2. Перейти в репозиторий → Actions → **Build road_distance.exe и road_time.exe**
+3. Скачать артефакты `road_distance` (внутри `road_distance.exe`) и `road_time` (внутри `road_time.exe`)
+4. Разместить оба `.exe` и файлы данных (`*.dbf`, `a_graf.*`) в одной папке на Windows
 
 На Windows не нужен Python и никакие библиотеки — всё упаковано в `.exe`.
 
@@ -115,7 +208,10 @@ pip3 install scipy numpy dbfread pyshp pyproj
 ```cmd
 road_distance.exe --objects school.dbf
 road_distance.exe --objects hospitals.dbf --grid all_points.dbf --roads a_graf.shp
+
+road_time.exe --objects school.dbf
+road_time.exe --objects hospitals.dbf --grid all_points.dbf --roads a_graf.shp
 ```
 
-Параметры те же, что в разделе 1.
+Параметры те же, что в разделах 1 и 2. `road_time.exe` требует `a_graf.shp` (поля `oneway`, `speed`) — с `roads.shp` не работает.
 
